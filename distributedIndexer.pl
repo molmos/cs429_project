@@ -7,7 +7,7 @@ use Solr;
 ## Global Vars ##
 my (%solr,%hosts);
 my (@files);
-my ($config_file,$files_to_index,$debug,$help);
+my ($config_file,$files_to_index,$log_dir,$debug,$help);
 
 
 ####################
@@ -18,6 +18,7 @@ my ($config_file,$files_to_index,$debug,$help);
 GetOptions(
 	"config|c=s", \$config_file,
 	"files|f=s",  \$files_to_index,
+	"log|l=s",    \$log_dir,
 	"debug|d",    \$debug,
 	"help|h|?",   \$help,
 ) or usage();
@@ -26,13 +27,16 @@ GetOptions(
 usage() if defined($help);
 print "Config File Required. See -config for more info.\n\n"       and usage() unless defined($config_file);
 print "Files to index are required. See -files for more info.\n\n" and usage() unless defined($files_to_index);
+print "Log directory is required. See -log for more info.\n\n"     and usage() unless defined($log_dir);
 print "Config File does not exist.\n\n"                            and usage() unless -e $config_file;
 print "Directory with files to index does not exist.\n\n"          and usage() unless -d $files_to_index;
+print "Specified log directory does not exist.\n\n"                and usage() unless -d $log_dir;
 
 
 # Debug command-line options
 debug("Config File: $config_file");
 debug("Directory with Files: $files_to_index");
+debug("Log Directory: $log_dir");
 
 
 # Get the list of config files
@@ -182,7 +186,7 @@ sub add_file {
 	my $solr = Solr->new(schema=>"./schema.xml",
 		port=> "$port",
 		url=> "http://$host:$port/solr/update",
-		log_dir=> "./log/") or die "Cannot connect to Solr\n";
+		log_dir=> "$log_dir") or die "Cannot connect to Solr\n";
 
 	my $timeout = 5;
 
@@ -210,6 +214,7 @@ sub usage {
 
 	-config|c   The location of the configuration file.
 	-files|f    The location of the directory containing all of the files to be indexed.
+	-log|l      The location of the directory where log files should be placed.
 	-debug|d    Debug mode
 	-help|h|?   Tthis message\n\n";
 
