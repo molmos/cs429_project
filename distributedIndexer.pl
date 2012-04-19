@@ -2,6 +2,7 @@
 use warnings;
 use strict;
 use Getopt::Long;
+use Solr;
 
 ## Global Vars ##
 my (%solr,%hosts);
@@ -109,7 +110,7 @@ sub add_file {
 			$docno =~ s/^\s+//;
 			$docno =~ s/\s+$//;
 
-			$fields{$counter}{'DOCNO'} = $docno;
+			$fields{$counter}{'id'} = $docno;
 			next;
 		}
 
@@ -118,7 +119,7 @@ sub add_file {
 			$parent =~ s/^\s+//;
 			$parent =~ s/\s+$//;
 
-			$fields{$counter}{'PARENT'} = $parent;
+			$fields{$counter}{'parent'} = $parent;
 			next;
 		}
 
@@ -168,7 +169,7 @@ sub add_file {
 			$current_contents =~ s/&/ /g;
 			$current_contents =~ s/\$/ /g;
 
-			$fields{$counter}{'TEXT'} = $current_contents;
+			$fields{$counter}{'text'} = $current_contents;
 			$text = 0;
 			next;
 		}
@@ -178,38 +179,21 @@ sub add_file {
 	close (XML);
 
 	# Index docs to Solr
-	my $update_str = '';
-	my $counter2   = 0;
-	my $number     = keys %fields;
-	debug("Number of DOCNO's found: $number");
-	foreach my $key (sort keys %fields) {
-		$counter2++;
-		$fields{$key}{'PARENT'} = '' unless defined($fields{$key}{'PARENT'});
+	my $solr = Solr->new(schema=>"./schema.xml",
+		port=> "$port",
+		url=> "http://$host:$port/solr/update",
+		log_dir=> "./log/") or die "Cannot connect to Solr\n";
 
-		$update_str .= '<add><doc>';
-		$update_str .= '<field name="id">'.     $fields{$key}{'DOCNO'}  .'</field>';
-		$update_str .= '<field name="parent">'. $fields{$key}{'PARENT'} .'</field>';
-		$update_str .= '<field name="text">'.   $fields{$key}{'TEXT'}   .'</field>';
-		$update_str .= '</doc></add>';
+	my $timeout = 5;
 
-		if ($counter2 == ($number%20) ) {
+	my $num_of_docs = keys %fields;
+	print "Found $num_of_docs DOCNO's\n";
 
-			$update_str = '<update>'.$update_str.'</update>';
-			my $response = `curl http://$host:$port/solr/update/?commit=true -H "Content-Type: text/xml" --data-binary '$update_str'`;
-			debug("FOUND RESPONSE (UPDATE):\n$response\n");
-			$response = `curl http://$host:$port/solr/update/?commit=true -H "Content-Type: text/xml" --data-binary '<commit/>'`;
-			debug("FOUND RESPONSE (COMMIT):\n$response\n");
-			$counter2   = 0;
-			$update_str = '';
-		}
+	foreach my $doc (keys %fields) {
+		my $d = $fields{$doc};
+		$solr->add($d, $timeout) or die "Cannot add field: $!\n";
 	}
-
-	# Commit the remaining files
-	$update_str = '<update>'.$update_str.'</update>';
-	my $response = `curl http://$host:$port/solr/update/?commit=true -H "Content-Type: text/xml" --data-binary '$update_str'`;
-	debug("FOUND RESPONSE (UPDATE):\n$response\n");
-	$response = `curl http://$host:$port/solr/update/?commit=true -H "Content-Type: text/xml" --data-binary '<commit/>'`;
-	debug("FOUND RESPONSE (COMMIT):\n$response\n");
+	$solr->commit() or die "Cannot commit field: $!\n";
 
 }
 
