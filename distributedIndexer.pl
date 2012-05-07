@@ -2,12 +2,14 @@
 use warnings;
 use strict;
 use Getopt::Long;
+use JSON;
 use Solr;
 
 ## Global Vars ##
 my (%solr,%hosts);
 my (@files);
 my ($config_file,$files_to_index,$log_dir,$debug,$help);
+$SIG{'INT'} = 'Handler';
 
 
 ####################
@@ -39,42 +41,81 @@ debug("Directory with Files: $files_to_index");
 debug("Log Directory: $log_dir");
 
 
-# Get the list of config files
+# Get the contents of the config file
+my $contents = '';
 open(CON, $config_file) or die "Cannot open $config_file: $!\n";
-my $h = 1;
-my $found_host = 0;
 while (<CON>) {
-	next if /^#/;
-
-	if (/^(\d+\.\d+\.\d+\.\d+):(\d+)$/) {
-		$hosts{$h}{'host'} = $1;
-		$hosts{$h}{'port'} = $2;
-		debug("Found Solr host: ". $hosts{$h}{'host'} .":". $hosts{$h}{'port'});
-		$h++;
-		$found_host = 1;
-	}
+	$contents .= $_;
 }
 close(CON) or die "Cannot close $config_file: $!\n";
+die "Error parsing JSON in config file. No hosts found\n" if $contents eq '';
+
+
+# Parse the json for list of master hosts/ports
+my $json         = JSON->new->allow_nonref;
+my $decoded_data = $json->decode( $contents );
+my $curr_shard   = 0;
+my $h            = 1;
+my $found_host   = 0;
+while (1) {
+
+	if ( exists($decoded_data->[$curr_shard][0][0][4]) and exists($decoded_data->[$curr_shard][0][1]) ) {
+		debug("Found Shard: $curr_shard, Public IP: ". $decoded_data->[$curr_shard][0][0][4] .", Port: ". $decoded_data->[$curr_shard][0][1] );
+
+		$hosts{$h}{'host'} = $decoded_data->[$curr_shard][0][0][4];
+		$hosts{$h}{'port'} = $decoded_data->[$curr_shard][0][1];
+
+		$curr_shard++;
+		$h++;
+		$found_host = 1;
+	} else {
+		last;
+	}
+
+}
 die "No server:port found in config file!\n" unless $found_host;
+
+=start
+# [shard][master][server][ec2_fields]
+# [shard][master][port]
+# [shard][master][dir]
+
+# [shard][slaves][slave][server][ec2_fields]
+# [shard][slaves][slave][port]
+# [shard][slaves][slave][dir]
+
+# [shard][haproxy][port]
+# [shard][haproxy][server][ec2_fields]
+=cut
 
 
 # Get the list of files to be indexed
+my $num_frcr_files = 0;
 opendir(DIR, $files_to_index) or die "Cannot open $files_to_index: $!\n";
 while ( my $filename = readdir(DIR) ) {
+
 	push(@files, $files_to_index.$filename) unless ($filename =~ /^\.$/ or $filename =~ /^\.\.$/);
 	debug("Found file: ". $files_to_index.$filename);
+	$num_frcr_files++;
+
 }
 closedir(DIR);
+debug("Found $num_frcr_files frcr files to index");
 
 # Open each file and index
 my $j = 1;
+my $num_frcr_indexed = 0;
+my $amount_of_data_indexed = 0;
 foreach my $file_name (@files) {
 	if ($j == $h) {
 		$j = 1;
 	}
 
 	add_file($file_name, $hosts{$j}{'host'}, $hosts{$j}{'port'});
-	debug("Adding file $file_name to ". $hosts{$j}{'host'} .":". $hosts{$j}{'port'});
+	debug("Added file $file_name to ". $hosts{$j}{'host'} .":". $hosts{$j}{'port'});
+
+	$amount_of_data_indexed += ((-s $file_name) / (1024 * 1024));
+	$num_frcr_indexed++;
 	$j++;
 }
 
@@ -229,4 +270,14 @@ sub debug {
 	chomp $debug_msg;
 
 	print "DEBUG: $debug_msg\n" if defined($debug);
+}
+
+#######################
+# Handler sub routine #
+#######################
+sub Handler {
+	print "\n\n Caught ^C\n\n";
+	printf("Total Files Indexed: $num_frcr_indexed/$num_frcr_files (%.2f%%).\n", ($num_frcr_indexed/$num_frcr_files));
+	printf("Amount Indexed: %.2f MB\n", $amount_of_data_indexed);
+	exit(0);
 }
