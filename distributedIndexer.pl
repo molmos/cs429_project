@@ -106,6 +106,7 @@ debug("Found $num_frcr_files frcr files to index");
 my $j = 1;
 my $num_frcr_indexed = 0;
 my $amount_of_data_indexed = 0;
+my $pct_done = 5;
 foreach my $file_name (@files) {
 	if ($j == $h) {
 		$j = 1;
@@ -117,6 +118,11 @@ foreach my $file_name (@files) {
 	$amount_of_data_indexed += ((-s $file_name) / (1024 * 1024));
 	$num_frcr_indexed++;
 	$j++;
+
+	if ( (($num_frcr_indexed/$num_frcr_files)*100) >= $pct_done) {
+		print "$pct_done% has been indexed.\n";
+		$pct_done += 5;
+	}
 }
 
 exit;
@@ -232,7 +238,7 @@ sub add_file {
 	my $timeout = 5;
 
 	my $num_of_docs = keys %fields;
-	print "Found $num_of_docs DOCNO's\n";
+	debug("Found $num_of_docs DOCNO's\n");
 
 	foreach my $doc (keys %fields) {
 		my $d = $fields{$doc};
@@ -277,7 +283,7 @@ sub debug {
 #######################
 sub Handler {
 	print "\n\n Caught ^C\n\n";
-	printf("Total Files Indexed: $num_frcr_indexed/$num_frcr_files (%.2f%%).\n", ($num_frcr_indexed/$num_frcr_files));
+	printf("Total Files Indexed: $num_frcr_indexed/$num_frcr_files (%.2f%%).\n", ($num_frcr_indexed/$num_frcr_files)*100);
 	printf("Amount Indexed: %.2f MB\n", $amount_of_data_indexed);
 	exit(0);
 }
