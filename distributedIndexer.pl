@@ -120,7 +120,7 @@ foreach my $file_name (@files) {
 	$j++;
 
 	if ( (($num_frcr_indexed/$num_frcr_files)*100) >= $pct_done) {
-		print "$pct_done% has been indexed.\n";
+		print "$num_frcr_indexed/$num_frcr_files ($pct_done%) files have been indexed.\n";
 		$pct_done += 5;
 	}
 }
