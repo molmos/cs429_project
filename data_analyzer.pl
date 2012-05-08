@@ -15,7 +15,7 @@ my ($query_file,$debug,$help);
 
 # Get command-line options
 GetOptions(
-	"query_file|q=s",  \$query_file,
+	"query_stats|q=s",  \$query_file,
 	"debug|d",         \$debug,
 	"help|?",          \$help,
 ) or usage();
@@ -229,7 +229,7 @@ sub usage {
 		The script will create a spreadsheet with all the data and also
 		create graphs of the data.
 
-	-query_file|q  The file which has the ab results from the queries
+	-query_stats|q The file which has the ab results from the queries
 	-debug|d       Debug mode
 	-help|?        This message\n\n";
 
