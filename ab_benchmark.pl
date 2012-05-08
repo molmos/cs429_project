@@ -4,7 +4,7 @@ use warnings;
 use Getopt::Long;
 
 ## Global Vars ##
-my ($host,$port,$query_file,$concurrency,$repeat,$debug,$help);
+my ($host,$port,$shards,$query_file,$concurrency,$repeat,$debug,$help);
 
 
 ####################
@@ -15,6 +15,7 @@ my ($host,$port,$query_file,$concurrency,$repeat,$debug,$help);
 GetOptions(
 	"host|h=s",        \$host,
 	"port|p=i",        \$port,
+	"shards|s=i",      \$shards,
 	"query_file|q=s",  \$query_file,
 	"concurrency|c=i", \$concurrency,
 	"repeat|r=i",      \$repeat,
@@ -24,16 +25,18 @@ GetOptions(
 
 # Check command-line options
 usage() if defined($help);
-die "Host not given. See -host below:\n"               and usage() unless defined($host);
-die "Port not given. See -port below:\n"               and usage() unless defined($port);
-die "Query File not given. See -query_file below:\n"   and usage() unless defined($query_file);
-die "Concurrency not given. See -concurrency below:\n" and usage() unless defined($concurrency);
-die "Repeat not given. See -repeat below:\n"           and usage() unless defined($repeat);
+print "Host not given. See -host below:\n"               and usage() unless defined($host);
+print "Port not given. See -port below:\n"               and usage() unless defined($port);
+print "Shards not given. See -shards below:\n"           and usage() unless defined($shards);
+print "Query File not given. See -query_file below:\n"   and usage() unless defined($query_file);
+print "Concurrency not given. See -concurrency below:\n" and usage() unless defined($concurrency);
+print "Repeat not given. See -repeat below:\n"           and usage() unless defined($repeat);
 
 
 # Debug command-line options
 debug("Host:        $host");
 debug("Port:        $port");
+debug("Shards:      $shards");
 debug("Query File:  $query_file");
 debug("Repeat:      $repeat");
 debug("Concurrency: $concurrency");
@@ -60,15 +63,20 @@ sub run_query {
 	my ($query) = shift;
 
 #### Use the following for urls:
-####    http://localhost:1445/solr/dist-query?q=ipod+solr
-####    http://[hostname]:[port]/solr/dist-query?q=ipod+solr
-	my $url     = "http://$host:$port/solr/dist-query?q=$query";
+	my $url;
+
+	if ($shards = 1) {
+		$url = "http://$host:$port/solr/search?q=$query&df=text";
+	} else {
+		$url = "http://$host:$port/solr/dist-query?q=$query&df=text";
+	}
+
 	#my $url     = "http://$host:$port/solr/select?shards=localhost:9910/solr,localhost:9911/solr,localhost:9912/solr,localhost:9913/solr&indent=true&q=$query";
 
 	my $cmd = "ab -n $repeat -c $concurrency '$url' >> tmp_$time.txt";
+	debug("Running CMD: $cmd");
 
 	my $response = `$cmd`;
-	#print "\n\nCURRENT CMD: $cmd\nRESPONSE:\n$response\n";
 }
 
 #####################
@@ -84,6 +92,7 @@ sub usage {
 
 	-host|h        The host's url
 	-port|p        The host's port
+	-shards|s      The number of shards being used at the host
 	-query_file|q  The file which has the list of queries to perform
 	-concurrency|c The number of requests to send simultaneously
 	-repeat|r      The number of times to perform each query
