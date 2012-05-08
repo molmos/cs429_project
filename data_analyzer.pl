@@ -22,8 +22,8 @@ GetOptions(
 
 # Check command-line options
 usage() if defined($help);
-die "Query File not given. See -query_file below:\n"   and usage() unless defined($query_file);
-die "Query File does not exist.\n"                     and usage() unless -e $query_file;
+print "Query File not given. See -query_file below:\n"   and usage() unless defined($query_file);
+print "Query File does not exist.\n"                     and usage() unless -e $query_file;
 
 
 # Debug command-line options
