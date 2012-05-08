@@ -17,10 +17,6 @@ my $global_num_frcr_indexed       : shared = 0;
 
 $SIG{'INT'}  = \&Handler;
 $SIG{'TERM'} = \&Handler;
-#$SIG{'INT'}  = sub { threads->exit(); };
-#$SIG{'TERM'} = sub { threads->exit(); };
-#$SIG{'INT'}  = sub { $threads[0]->kill('INT')->detach(); };
-#$SIG{'TERM'} = sub { $threads[0]->kill('TERM')->detach(); };
 
 
 ####################
@@ -42,10 +38,12 @@ usage() if defined($help);
 print "Config File Required. See -config for more info.\n\n"            and usage() unless defined($config_file);
 print "Files to index are required. See -files for more info.\n\n"      and usage() unless defined($files_to_index);
 print "Log directory is required. See -log for more info.\n\n"          and usage() unless defined($log_dir);
-print "Amount of threads is required. See -threads for more info.\n\n"  and usage() unless defined($threads);
+print "Amount of threads is required. See -threads for more info.\n\n"  and usage() unless defined($threads) and $threads > 0;
 print "Config File does not exist.\n\n"                                 and usage() unless -e $config_file;
 print "Directory with files to index does not exist.\n\n"               and usage() unless -d $files_to_index;
 print "Specified log directory does not exist.\n\n"                     and usage() unless -d $log_dir;
+
+print "REMINDER: Script should be run as: \n\t~\$ PERL_SIGNALS=unsafe perl ./distributedIndexer3.pl [OPTIONS ... ]\n";
 
 
 # Debug command-line options
@@ -118,28 +116,23 @@ closedir(DIR);
 debug("Found $num_frcr_files frcr files to index");
 
 # Create the threads
-if ($threads == 1) {
-	create_thread(0,scalar(@files),1);
-} else {
+my $files_per_thread = int($num_frcr_files/$threads);
+my $start = 0;
+my $end = $files_per_thread;
 
-	my $files_per_thread = int($num_frcr_files/$threads);
-	my $start = 0;
-	my $end = $files_per_thread;
+for (my $count = 1; $count <= $threads; $count++) {
+	my $t = threads->new(\&create_thread, $start, $end, $count);
+	push(@threads,$t);
 
-	for (my $count = 1; $count <= $threads; $count++) {
-		my $t = threads->new(\&create_thread, $start, $end, $count);
-		push(@threads,$t);
-
-		$start = $end+1;
-		$end += ($files_per_thread);
-		if ($count == $threads-1) {
-			$end = scalar(@files);
-		}
+	$start = $end+1;
+	$end += ($files_per_thread);
+	if ($count == $threads-1) {
+		$end = scalar(@files);
 	}
-	foreach (@threads) {
-		my $num = $_->join;
-		debug("Done with thread $num\n");
-	}
+}
+foreach (@threads) {
+	my $num = $_->join;
+	debug("Done with thread $num\n");
 }
 
 
@@ -154,13 +147,6 @@ exit;
 #############################
 # args: starting_file_index, ending_file_index, thread_num
 sub create_thread {
-
-	$SIG{'TERM'} = sub { $kill_threads = 1; };
-	$SIG{'INT'}  = sub { $kill_threads = 1; };
-	#$SIG{'TERM'} = sub { threads->exit() if threads->can('exit'); };
-	#$SIG{'INT'}  = sub { threads->exit() if threads->can('exit'); };
-	#$SIG{'INT'}  = sub { foreach (@threads) { my $num = $_->join;} };
-	#$SIG{'TERM'} = sub { foreach (@threads) { my $num = $_->join;} };
 
 	my ($start_file_index,$ending_file_index,$thread_num) = @_;
 	debug("Starting thread $thread_num");
@@ -184,13 +170,7 @@ sub create_thread {
 		if ($kill_threads) {
 			debug("returning thread $thread_num");
 			return;
-=start
-			foreach my $y (0 .. $#threads) {
-				$threads[$y]->join();
-				sleep(2);
-			}
-			&Handler;
-=cut
+
 		} else {
 			debug("\$kill_threads = $kill_threads");
 		}
@@ -345,6 +325,9 @@ sub usage {
 	usage: $progname
 	Script for distributing a Solr index accross multiple shards
 
+	NOTE: Script must be run like:
+		PERL_SIGNALS=unsafe perl ./distributedIndexer3.pl
+
 	-config|c   The location of the configuration file.
 	-files|f    The location of the directory containing all of the files to be indexed.
 	-log|l      The location of the directory where log files should be placed.
@@ -371,29 +354,21 @@ sub debug {
 sub Handler {
 	print "\n\n CAUGHT SIGINT\n Gracefully Ending threads\n\n";
 
-	if ($threads != 1) {
+	$kill_threads = 1;
+	sleep(7);
 
-		$kill_threads = 1;
-		sleep(5);
-
-		while (threads->list() > 1) {
-			foreach (threads->list()) {
-				while ( $_->is_running() ) {
-					sleep(0.5);
-				}
-				$_->join();
+	while (threads->list() > 1) {
+		foreach (threads->list()) {
+			while ( $_->is_running() ) {
+				sleep(0.5);
 			}
+			$_->join();
 		}
-
-		
-		printf("FINAL: Total Files Indexed: $global_num_frcr_indexed/$num_frcr_files (%.2f%%).\n", ($global_num_frcr_indexed/$num_frcr_files)*100);
-		printf("FINAL: Amount Indexed: %.2f MB\n", $global_amount_of_data_indexed);
-		exit(0);
-
-	} else {
-
-		printf("Total Files Indexed: $global_num_frcr_indexed/$num_frcr_files (%.2f%%).\n", ($global_num_frcr_indexed/$num_frcr_files)*100);
-		printf("Amount Indexed: %.2f MB\n", $global_amount_of_data_indexed);
-		exit(0);
 	}
+
+
+	printf("FINAL: Total Files Indexed: $global_num_frcr_indexed/$num_frcr_files (%.2f%%).\n", ($global_num_frcr_indexed/$num_frcr_files)*100);
+	printf("FINAL: Amount Indexed: %.2f MB\n", $global_amount_of_data_indexed);
+	exit(0);
+
 }
