@@ -4,12 +4,23 @@ use strict;
 use Getopt::Long;
 use JSON;
 use Solr;
+use threads;
+use threads::shared;
 
 ## Global Vars ##
 my (%solr,%hosts);
-my (@files);
-my ($config_file,$files_to_index,$log_dir,$debug,$help);
-$SIG{'INT'} = 'Handler';
+my (@files,@threads);
+my ($config_file,$files_to_index,$log_dir,$threads,$debug,$help);
+my $kill_threads                  : shared = 0;
+my $global_amount_of_data_indexed : shared = 0;
+my $global_num_frcr_indexed       : shared = 0;
+
+$SIG{'INT'}  = \&Handler;
+$SIG{'TERM'} = \&Handler;
+#$SIG{'INT'}  = sub { threads->exit(); };
+#$SIG{'TERM'} = sub { threads->exit(); };
+#$SIG{'INT'}  = sub { $threads[0]->kill('INT')->detach(); };
+#$SIG{'TERM'} = sub { $threads[0]->kill('TERM')->detach(); };
 
 
 ####################
@@ -18,27 +29,30 @@ $SIG{'INT'} = 'Handler';
 
 # Get command-line options
 GetOptions(
-	"config|c=s", \$config_file,
-	"files|f=s",  \$files_to_index,
-	"log|l=s",    \$log_dir,
-	"debug|d",    \$debug,
-	"help|h|?",   \$help,
+	"config|c=s",  \$config_file,
+	"files|f=s",   \$files_to_index,
+	"log|l=s",     \$log_dir,
+	"threads|t=i", \$threads,
+	"debug|d",     \$debug,
+	"help|h|?",    \$help,
 ) or usage();
 
 # Check command-line options
 usage() if defined($help);
-print "Config File Required. See -config for more info.\n\n"       and usage() unless defined($config_file);
-print "Files to index are required. See -files for more info.\n\n" and usage() unless defined($files_to_index);
-print "Log directory is required. See -log for more info.\n\n"     and usage() unless defined($log_dir);
-print "Config File does not exist.\n\n"                            and usage() unless -e $config_file;
-print "Directory with files to index does not exist.\n\n"          and usage() unless -d $files_to_index;
-print "Specified log directory does not exist.\n\n"                and usage() unless -d $log_dir;
+print "Config File Required. See -config for more info.\n\n"            and usage() unless defined($config_file);
+print "Files to index are required. See -files for more info.\n\n"      and usage() unless defined($files_to_index);
+print "Log directory is required. See -log for more info.\n\n"          and usage() unless defined($log_dir);
+print "Amount of threads is required. See -threads for more info.\n\n"  and usage() unless defined($threads);
+print "Config File does not exist.\n\n"                                 and usage() unless -e $config_file;
+print "Directory with files to index does not exist.\n\n"               and usage() unless -d $files_to_index;
+print "Specified log directory does not exist.\n\n"                     and usage() unless -d $log_dir;
 
 
 # Debug command-line options
 debug("Config File: $config_file");
 debug("Directory with Files: $files_to_index");
 debug("Log Directory: $log_dir");
+debug("Threads: $threads");
 
 
 # Get the contents of the config file
@@ -94,7 +108,8 @@ my $num_frcr_files = 0;
 opendir(DIR, $files_to_index) or die "Cannot open $files_to_index: $!\n";
 while ( my $filename = readdir(DIR) ) {
 
-	push(@files, $files_to_index.$filename) unless ($filename =~ /^\.$/ or $filename =~ /^\.\.$/);
+	next if ($filename =~ /^\.$/ or $filename =~ /^\.\.$/);
+	push(@files, $files_to_index.$filename);
 	debug("Found file: ". $files_to_index.$filename);
 	$num_frcr_files++;
 
@@ -102,31 +117,102 @@ while ( my $filename = readdir(DIR) ) {
 closedir(DIR);
 debug("Found $num_frcr_files frcr files to index");
 
-# Open each file and index
-my $j = 1;
-my $num_frcr_indexed = 0;
-my $amount_of_data_indexed = 0;
-my $pct_done = 5;
-foreach my $file_name (@files) {
-	if ($j == $h) {
-		$j = 1;
+# Create the threads
+if ($threads == 1) {
+	create_thread(0,scalar(@files),1);
+} else {
+
+	my $files_per_thread = int($num_frcr_files/$threads);
+	my $start = 0;
+	my $end = $files_per_thread;
+
+	for (my $count = 1; $count <= $threads; $count++) {
+		my $t = threads->new(\&create_thread, $start, $end, $count);
+		push(@threads,$t);
+
+		$start = $end+1;
+		$end += ($files_per_thread);
+		if ($count == $threads-1) {
+			$end = scalar(@files);
+		}
 	}
-
-	add_file($file_name, $hosts{$j}{'host'}, $hosts{$j}{'port'});
-	debug("Added file $file_name to ". $hosts{$j}{'host'} .":". $hosts{$j}{'port'});
-
-	$amount_of_data_indexed += ((-s $file_name) / (1024 * 1024));
-	$num_frcr_indexed++;
-	$j++;
-
-	if ( (($num_frcr_indexed/$num_frcr_files)*100) >= $pct_done) {
-		print "$num_frcr_indexed/$num_frcr_files ($pct_done%) files have been indexed.\n";
-		$pct_done += 5;
+	foreach (@threads) {
+		my $num = $_->join;
+		debug("Done with thread $num\n");
 	}
 }
 
+
+# Print out stats
+printf("FINAL: Total Files Indexed: $global_num_frcr_indexed/$num_frcr_files (%.2f%%).\n", ($global_num_frcr_indexed/$num_frcr_files)*100);
+printf("FINAL: Amount Indexed: %.2f MB\n", $global_amount_of_data_indexed);
+
 exit;
 
+#############################
+# create_thread sub routine #
+#############################
+# args: starting_file_index, ending_file_index, thread_num
+sub create_thread {
+
+	$SIG{'TERM'} = sub { $kill_threads = 1; };
+	$SIG{'INT'}  = sub { $kill_threads = 1; };
+	#$SIG{'TERM'} = sub { threads->exit() if threads->can('exit'); };
+	#$SIG{'INT'}  = sub { threads->exit() if threads->can('exit'); };
+	#$SIG{'INT'}  = sub { foreach (@threads) { my $num = $_->join;} };
+	#$SIG{'TERM'} = sub { foreach (@threads) { my $num = $_->join;} };
+
+	my ($start_file_index,$ending_file_index,$thread_num) = @_;
+	debug("Starting thread $thread_num");
+	debug("Thread $thread_num: indexing files $start_file_index - $ending_file_index");
+
+	# Open each file and index
+	my $j = 1;
+	my $num_frcr_indexed = 0;
+	my $amount_of_data_indexed = 0;
+	my $pct_done = 5;
+
+	my $num_to_index = 0;
+	foreach ($start_file_index .. $ending_file_index) { $num_to_index++; }
+
+	foreach my $n ($start_file_index .. $ending_file_index) {
+		my $file_name = $files[$n];
+		if ($j == $h) {
+			$j = 1;
+		}
+
+		if ($kill_threads) {
+			debug("returning thread $thread_num");
+			return;
+=start
+			foreach my $y (0 .. $#threads) {
+				$threads[$y]->join();
+				sleep(2);
+			}
+			&Handler;
+=cut
+		} else {
+			debug("\$kill_threads = $kill_threads");
+		}
+
+		add_file($file_name, $hosts{$j}{'host'}, $hosts{$j}{'port'});
+		debug("Thread $thread_num: Added file $file_name to ". $hosts{$j}{'host'} .":". $hosts{$j}{'port'});
+
+		$amount_of_data_indexed        += ((-s $file_name) / (1024 * 1024));
+		$global_amount_of_data_indexed += ((-s $file_name) / (1024 * 1024));
+		$num_frcr_indexed++;
+		$global_num_frcr_indexed++;
+		$j++;
+
+		debug("\$global_amount_of_data_indexed = $global_amount_of_data_indexed");
+		debug("\$global_num_frcr_indexed = $global_num_frcr_indexed");
+
+		if ( (($num_frcr_indexed/$num_frcr_files)*100) >= $pct_done) {
+			print "Thread $thread_num: $num_frcr_indexed/$num_to_index ($pct_done%) files have been indexed.\n";
+			$pct_done += 5;
+		}
+	}
+}
 
 ########################
 # add_file sub routine #
@@ -262,6 +348,7 @@ sub usage {
 	-config|c   The location of the configuration file.
 	-files|f    The location of the directory containing all of the files to be indexed.
 	-log|l      The location of the directory where log files should be placed.
+	-threads|t  The number of threads to be created for indexing
 	-debug|d    Debug mode
 	-help|h|?   Tthis message\n\n";
 
@@ -282,8 +369,31 @@ sub debug {
 # Handler sub routine #
 #######################
 sub Handler {
-	print "\n\n Caught ^C\n\n";
-	printf("Total Files Indexed: $num_frcr_indexed/$num_frcr_files (%.2f%%).\n", ($num_frcr_indexed/$num_frcr_files)*100);
-	printf("Amount Indexed: %.2f MB\n", $amount_of_data_indexed);
-	exit(0);
+	print "\n\n CAUGHT SIGINT\n Gracefully Ending threads\n\n";
+
+	if ($threads != 1) {
+
+		$kill_threads = 1;
+		sleep(5);
+
+		while (threads->list() > 1) {
+			foreach (threads->list()) {
+				while ( $_->is_running() ) {
+					sleep(0.5);
+				}
+				$_->join();
+			}
+		}
+
+		
+		printf("FINAL: Total Files Indexed: $global_num_frcr_indexed/$num_frcr_files (%.2f%%).\n", ($global_num_frcr_indexed/$num_frcr_files)*100);
+		printf("FINAL: Amount Indexed: %.2f MB\n", $global_amount_of_data_indexed);
+		exit(0);
+
+	} else {
+
+		printf("Total Files Indexed: $global_num_frcr_indexed/$num_frcr_files (%.2f%%).\n", ($global_num_frcr_indexed/$num_frcr_files)*100);
+		printf("Amount Indexed: %.2f MB\n", $global_amount_of_data_indexed);
+		exit(0);
+	}
 }
