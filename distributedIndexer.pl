@@ -127,7 +127,7 @@ for (my $count = 1; $count <= $threads; $count++) {
 	$start = $end+1;
 	$end += ($files_per_thread);
 	if ($count == $threads-1) {
-		$end = scalar(@files);
+		$end = scalar(@files)-1;
 	}
 }
 foreach (@threads) {
